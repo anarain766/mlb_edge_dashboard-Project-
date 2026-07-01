@@ -111,6 +111,223 @@ def refresh_status_for_time(commence_time) -> str:
     return "Early grade"
 
 
+def fmt_pct(value: float | int | None) -> str:
+    if value is None or pd.isna(value):
+        return "n/a"
+    return f"{float(value):.2%}"
+
+
+def fmt_ev(value: float | int | None) -> str:
+    if value is None or pd.isna(value):
+        return "n/a"
+    return f"${float(value):.3f} per $1"
+
+
+def describe_grade(row: pd.Series) -> str:
+    grade = str(row.get("grade", "D"))
+    refresh_status = str(row.get("refresh_status", "Early grade"))
+    if grade in {"A", "B"}:
+        return "This is one of the stronger current ML plays on the board."
+    if grade == "C":
+        return "This is playable, but I would size it smaller than an A/B spot."
+    if grade == "Lean":
+        return "This is more of a lean than a full play, so I would be price-sensitive."
+    if refresh_status in {"Early grade", "Lineup/weather refresh"}:
+        return "This is an early monitor grade, not a bet I would force yet."
+    return "This is a lower-confidence candidate unless the number improves."
+
+
+def describe_factor_read(row: pd.Series) -> str:
+    delta = row.get("model_prob_delta", 0)
+    summary = row.get("factor_summary", "")
+    if delta is None or pd.isna(delta) or abs(float(delta)) < 0.0025:
+        if summary and str(summary) != "Market only":
+            return f"The MLB factors are mostly neutral here. {summary}"
+        return "The current read is mostly market-based, so I would refresh later before locking it in."
+    direction = "helping" if float(delta) > 0 else "hurting"
+    return f"The MLB factor layer is {direction} this side by {fmt_pct(delta)}. {summary}"
+
+
+def opinion_action(row: pd.Series) -> str:
+    grade = str(row.get("grade", "D"))
+    edge = row.get("edge_pct", 0)
+    refresh_status = str(row.get("refresh_status", "Early grade"))
+    if grade == "A":
+        return "Top ML play"
+    if grade == "B":
+        return "Strong ML play"
+    if grade == "C":
+        return "Small single"
+    if grade == "Lean":
+        return "Lean / price watch"
+    if pd.notna(edge) and float(edge) > 0:
+        return "D monitor"
+    if refresh_status in {"Early grade", "Lineup/weather refresh"}:
+        return "D early grade"
+    return "D low priority"
+
+
+def suggested_unit(row: pd.Series) -> str:
+    grade = str(row.get("grade", "D"))
+    if grade == "A":
+        return "0.75–1.00u"
+    if grade == "B":
+        return "0.50–0.75u"
+    if grade == "C":
+        return "0.25–0.50u"
+    if grade == "Lean":
+        return "0.25u max"
+    return "monitor only"
+
+
+def opinion_pick_sentence(row: pd.Series, rank: int) -> str:
+    play = row.get("play", "")
+    game = row.get("game", "")
+    book = row.get("best_book", "")
+    grade = row.get("grade", "D")
+    action = row.get("opinion_action", opinion_action(row))
+    rec = row.get("recommendation", "Early grade")
+    unit = row.get("suggested_unit", suggested_unit(row))
+    edge = fmt_pct(row.get("edge_pct"))
+    model_win = fmt_pct(row.get("fair_prob"))
+    market_win = fmt_pct(row.get("market_fair_prob", row.get("fair_prob")))
+    implied = fmt_pct(row.get("best_implied_prob"))
+    ev = fmt_ev(row.get("ev_per_$1"))
+    playable_to = row.get("playable_to_label", "") or "n/a"
+    refresh = row.get("refresh_status", "Refresh later")
+    factor_read = describe_factor_read(row)
+
+    if rank == 1:
+        opener = "This is my favorite ML side on the current board"
+    elif rank == 2:
+        opener = "This is my second-best ML read right now"
+    elif grade in {"A", "B", "C"}:
+        opener = "This is still on my playable list"
+    else:
+        opener = "This is a watchlist side rather than something I would force"
+
+    return (
+        f"**{rank}. {play} — {action}.** {opener}. Game: {game}. Best book: **{book}**. "
+        f"The model has it at **{model_win}** versus **{implied}** implied at the best current price "
+        f"and **{market_win}** from the market baseline. That gives an estimated edge of **{edge}** "
+        f"and EV of **{ev}**. Grade: **{grade}** / Recommendation: **{rec}** / Suggested sizing: **{unit}**. "
+        f"I would only play this at **{playable_to} or better**. {factor_read} Refresh status: **{refresh}**."
+    )
+
+
+def build_daily_opinion_card(card_df: pd.DataFrame, max_picks: int = 6) -> tuple[str, list[str], list[str]]:
+    """Create a decision-ready opinion card from the current board.
+
+    This is meant to replace the daily manual question of "what are your best ML picks?"
+    inside the app. It is deterministic from the app's current odds/model data, not a live LLM call.
+    """
+    if card_df.empty:
+        return (
+            "No ML candidates are loaded yet. Refresh once today's odds are available.",
+            [],
+            ["No parlay opinion yet because there are no ranked ML candidates loaded."],
+        )
+
+    rows = card_df.head(max_picks).copy()
+    playable = card_df[card_df["grade"].isin(["A", "B", "C"])].copy()
+    leans = card_df[card_df["grade"].isin(["Lean", "D"])].copy()
+
+    if not playable.empty:
+        favorite = playable.iloc[0]
+        summary = (
+            f"**My current ML card starts with {favorite.get('play', '')}.** "
+            f"There are **{len(playable)}** A/B/C playable candidates and "
+            f"**{int(card_df['grade'].isin(['Lean']).sum())}** lean/watch candidates. "
+            "I would still keep early plays smaller until lineups, weather, and late market movement are checked. "
+            "Singles should take priority over parlays."
+        )
+    else:
+        favorite = card_df.iloc[0]
+        summary = (
+            f"**No full A/B/C ML play is showing yet, but my top early monitor is {favorite.get('play', '')}.** "
+            "This is exactly the early-card use case: rank the board now, then refresh later before placing stronger bets. "
+            "I would not force a full-unit ML until a later refresh improves the grade or confirms the setup."
+        )
+
+    pick_notes = [opinion_pick_sentence(row, i) for i, (_, row) in enumerate(rows.iterrows(), start=1)]
+
+    parlay_notes: list[str] = []
+    parlay_pool = card_df[card_df["grade"].isin(["A", "B", "C", "Lean"])].head(8)
+    if len(parlay_pool) >= 2:
+        two_leg = build_parlays(parlay_pool, legs=2, max_rows=8, max_combos=100).head(1)
+        if not two_leg.empty:
+            p = two_leg.iloc[0]
+            parlay_notes.append(
+                f"**Small parlay lean:** {p.get('plays', '')} at approximately **{format_american(p.get('parlay_price'))}**. "
+                f"Estimated hit rate: **{fmt_pct(p.get('estimated_hit_prob'))}**. I would treat this as a small sprinkle only."
+            )
+    else:
+        parlay_notes.append("No parlay lean yet. I want at least two Lean-or-better sides before building even a small 2-leg.")
+
+    if not leans.empty:
+        watch_names = ", ".join(leans.head(3)["play"].tolist())
+        parlay_notes.append(f"**Refresh watchlist:** {watch_names}. These are the first sides I would re-check later in the day.")
+
+    return summary, pick_notes, parlay_notes
+
+
+def build_opinion_writeups(card_df: pd.DataFrame, max_picks: int = 5) -> list[str]:
+    """Create opinion-style ML writeups from the current model rows.
+
+    This is deterministic text from the current board. It does not make extra API
+    calls, so it keeps the Today’s Card fast while giving a more practical read.
+    """
+    if card_df.empty:
+        return []
+    rows = card_df.head(max_picks).copy()
+    writeups: list[str] = []
+    for i, (_, row) in enumerate(rows.iterrows(), start=1):
+        play = row.get("play", "")
+        book = row.get("best_book", "")
+        game = row.get("game", "")
+        edge = fmt_pct(row.get("edge_pct"))
+        model_win = fmt_pct(row.get("fair_prob"))
+        market_win = fmt_pct(row.get("market_fair_prob", row.get("fair_prob")))
+        implied = fmt_pct(row.get("best_implied_prob"))
+        ev = fmt_ev(row.get("ev_per_$1"))
+        playable_to = row.get("playable_to_label", "") or "n/a"
+        grade = row.get("grade", "D")
+        recommendation = row.get("recommendation", "Early grade")
+        refresh_status = row.get("refresh_status", "Refresh later")
+        grade_read = describe_grade(row)
+        factor_read = describe_factor_read(row)
+
+        if i == 1:
+            lead = "My top current ML read"
+        elif i == 2:
+            lead = "Next-best ML read"
+        else:
+            lead = "Additional ML lean"
+
+        writeups.append(
+            f"**{i}. {play} — {lead}.** Game: {game}. Best price is at **{book}**. "
+            f"The model has this at **{model_win}** versus **{implied}** implied at the best price "
+            f"for an estimated edge of **{edge}** and EV of **{ev}**. "
+            f"Grade: **{grade}** / Recommendation: **{recommendation}**. "
+            f"I would only play it at **{playable_to} or better**. {grade_read} {factor_read} "
+            f"Refresh status: **{refresh_status}**."
+        )
+    return writeups
+
+
+def build_card_summary(card_df: pd.DataFrame) -> str:
+    if card_df.empty:
+        return "No ML candidates are loaded yet. Refresh the board after odds post."
+    strong = int(card_df["grade"].isin(["A", "B"]).sum()) if "grade" in card_df.columns else 0
+    playable = int(card_df["grade"].isin(["A", "B", "C", "Lean"]).sum()) if "grade" in card_df.columns else 0
+    d_count = int((card_df["grade"] == "D").sum()) if "grade" in card_df.columns else 0
+    best = card_df.iloc[0]
+    return (
+        f"Current board read: **{playable}** ML candidates are graded Lean or better, "
+        f"including **{strong}** A/B plays. There are **{d_count}** D-grade early monitors. "
+        f"The top-ranked side right now is **{best.get('play', '')}**, but the playable-to price still matters."
+    )
+
 def add_card_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -121,6 +338,8 @@ def add_card_columns(df: pd.DataFrame) -> pd.DataFrame:
     out["playable_to_label"] = out["playable_to"].apply(format_american)
     out["recommendation"] = out.apply(make_recommendation, axis=1)
     out["refresh_status"] = out["commence_time"].apply(refresh_status_for_time)
+    out["opinion_action"] = out.apply(opinion_action, axis=1)
+    out["suggested_unit"] = out.apply(suggested_unit, axis=1)
     out["card_score"] = (
         out["grade_rank"].astype(float) * 100
         + out["edge_pct"].fillna(0).astype(float) * 1000
@@ -240,7 +459,8 @@ if model_mode == "Market + MLB factors" and not base_plays_df.empty:
     except Exception as e:
         st.warning(f"MLB factor data could not be loaded, so the app is using market-only scoring. Details: {e}")
 
-plays_df = add_card_columns(base_plays_df)
+full_card_df = add_card_columns(base_plays_df)
+plays_df = full_card_df.copy()
 
 if not plays_df.empty and min_grade != "All":
     plays_df = plays_df[plays_df["grade_rank"] >= GRADE_ORDER[min_grade]]
@@ -258,115 +478,145 @@ with today_tab:
         "Only play a pick if the price is still at or better than the playable-to number."
     )
 
-    if plays_df.empty:
-        st.info("No moneyline plays found with the current filters.")
+    opinion_df = full_card_df.copy()
+    if not opinion_df.empty:
+        opinion_df["commence_time_et"] = to_et(opinion_df["commence_time"])
+
+    st.markdown("## My take — today's ML card")
+    st.caption(
+        "This section is meant to replace the daily question: 'What are your best ML picks today?' "
+        "It uses the full current board, even when the ranked table below is filtered. "
+        "Use Refresh later in the day to update it with line movement and fresh data."
+    )
+    if st.button("Refresh today's card now", key="today_refresh_button"):
+        st.cache_data.clear()
+        st.rerun()
+
+    if opinion_df.empty:
+        st.info("No moneyline candidates loaded yet. Check the Odds API key, refresh odds, or wait until today's MLB slate is available.")
     else:
-        card_df = plays_df.copy()
+        card_summary, pick_notes, parlay_notes = build_daily_opinion_card(opinion_df, max_picks=6)
+        st.markdown(card_summary)
+
+        st.markdown("### What I would do right now")
+        for pick_note in pick_notes:
+            st.markdown(pick_note)
+
+        st.markdown("### Parlay / refresh notes")
+        for note in parlay_notes:
+            st.markdown(note)
+
+    card_df = plays_df.copy()
+    if not card_df.empty:
         card_df["commence_time_et"] = to_et(card_df["commence_time"])
-        playable_df = card_df[card_df["grade"].isin(["A", "B", "C", "Lean"])].copy()
-        top_df = card_df.head(8)
+    playable_df = card_df[card_df["grade"].isin(["A", "B", "C", "Lean"])].copy() if not card_df.empty else card_df
+    top_df = card_df.head(8) if not card_df.empty else card_df
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Playable MLs", len(playable_df))
-        c2.metric("A/B plays", int(card_df["grade"].isin(["A", "B"]).sum()))
-        best_edge = card_df["edge_pct"].max() if not card_df.empty else 0
-        c3.metric("Best edge", f"{best_edge:.2%}")
-        next_start = card_df["commence_time_et"].min()
-        c4.metric("Next game ET", next_start.strftime("%-I:%M %p") if pd.notna(next_start) else "")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Playable MLs", len(playable_df))
+    c2.metric("A/B plays", int(card_df["grade"].isin(["A", "B"]).sum()) if not card_df.empty else 0)
+    best_edge = card_df["edge_pct"].max() if not card_df.empty else 0
+    c3.metric("Best edge", f"{best_edge:.2%}")
+    next_start = card_df["commence_time_et"].min() if not card_df.empty else pd.NaT
+    c4.metric("Next game ET", next_start.strftime("%-I:%M %p") if pd.notna(next_start) else "")
 
-        st.markdown("### Best ML picks — early card")
-        if top_df.empty:
-            st.info("No moneyline candidates loaded yet. Refresh odds after the slate updates.")
-        else:
-            show_cols = [
-                "commence_time_et",
-                "game",
-                "play",
-                "best_book",
-                "fair_prob",
-                "market_fair_prob",
-                "model_prob_delta",
-                "best_implied_prob",
-                "edge_pct",
-                "ev_per_$1",
-                "playable_to_label",
-                "grade",
-                "recommendation",
-                "refresh_status",
-                "factor_summary",
-            ]
-            show = top_df[[c for c in show_cols if c in top_df.columns]].copy()
-            show = pct_display_frame(show)
-            st.dataframe(
-                show,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "commence_time_et": st.column_config.DatetimeColumn("Start ET"),
-                    "best_book": "Best book",
-                    "fair_prob": st.column_config.NumberColumn("Model win %", format="%.2f%%"),
-                    "market_fair_prob": st.column_config.NumberColumn("Market win %", format="%.2f%%"),
-                    "model_prob_delta": st.column_config.NumberColumn("MLB factor +/-", format="%.2f%%"),
-                    "best_implied_prob": st.column_config.NumberColumn("Best implied %", format="%.2f%%"),
-                    "edge_pct": st.column_config.NumberColumn("Edge", format="%.2f%%"),
-                    "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
-                    "playable_to_label": "Playable to",
-                },
-            )
-
-            st.caption(
-                "Grade guide: A/B = strongest current plays, C = smaller single, Lean = watch/small only, "
-                "D = early monitor grade. Refresh later for confirmed lineups/weather and market movement. "
-                "Playable-to keeps roughly a 1.5 percentage-point edge versus the current model fair probability."
-            )
-
-            st.markdown("### Quick add to tracker")
-            pick_label = st.selectbox("Card pick", top_df["play"].tolist(), key="card_pick")
-            selected = top_df.loc[top_df["play"] == pick_label].iloc[0]
-            stake = st.number_input("Stake", min_value=0.0, value=10.0, step=1.0, key="card_stake")
-            notes = st.text_input(
-                "Notes",
-                value=(
-                    f"{selected['recommendation']}; grade {selected['grade']}; "
-                    f"edge {selected['edge_pct']:.2%}; playable to {selected['playable_to_label']}"
-                ),
-                key="card_notes",
-            )
-            if st.button("Add card pick"):
-                add_bet(
-                    event_date=str(pd.to_datetime(selected["commence_time"]).date()),
-                    bet_type="Moneyline",
-                    play=selected["play"],
-                    book=selected["best_book"],
-                    odds=int(selected["best_price"]),
-                    stake=float(stake),
-                    notes=notes,
-                )
-                st.success("Pick added to tracker.")
-
-        st.markdown("### Small parlay ideas")
-        parlay_pool = playable_df[playable_df["grade"].isin(["A", "B", "C", "Lean"])]
-        two_leg = build_parlays(parlay_pool, legs=2).head(5)
-        if two_leg.empty:
-            st.info("No 2-leg parlay ideas available from the current graded plays.")
-        else:
-            two_leg_display = pct_display_frame(two_leg, ["estimated_hit_prob"])
-            st.dataframe(
-                two_leg_display,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "estimated_hit_prob": st.column_config.NumberColumn("Estimated hit %", format="%.2f%%"),
-                    "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
-                    "parlay_price": st.column_config.NumberColumn("Parlay odds"),
-                },
-            )
-
-        st.markdown("### HR props workflow")
-        st.write(
-            "Use the HR Props tab for game-level dinger prices. Moneyline scoring now has real MLB factors; "
-            "the next prop-specific upgrade is adding batter power and opposing-pitcher HR risk to the HR board."
+    st.markdown("### Best ML picks — ranked card")
+    if top_df.empty:
+        st.info("No moneyline plays found with the current filters. The opinion section above still uses the full board; lower the Minimum grade filter to show the table.")
+    else:
+        show_cols = [
+            "commence_time_et",
+            "game",
+            "play",
+            "best_book",
+            "fair_prob",
+            "market_fair_prob",
+            "model_prob_delta",
+            "best_implied_prob",
+            "edge_pct",
+            "ev_per_$1",
+            "playable_to_label",
+            "grade",
+            "opinion_action",
+            "suggested_unit",
+            "recommendation",
+            "refresh_status",
+            "factor_summary",
+        ]
+        show = top_df[[c for c in show_cols if c in top_df.columns]].copy()
+        show = pct_display_frame(show)
+        st.dataframe(
+            show,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "commence_time_et": st.column_config.DatetimeColumn("Start ET"),
+                "best_book": "Best book",
+                "fair_prob": st.column_config.NumberColumn("Model win %", format="%.2f%%"),
+                "market_fair_prob": st.column_config.NumberColumn("Market win %", format="%.2f%%"),
+                "model_prob_delta": st.column_config.NumberColumn("MLB factor +/-", format="%.2f%%"),
+                "best_implied_prob": st.column_config.NumberColumn("Best implied %", format="%.2f%%"),
+                "edge_pct": st.column_config.NumberColumn("Edge", format="%.2f%%"),
+                "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
+                "playable_to_label": "Playable to",
+                "opinion_action": "My action",
+                "suggested_unit": "Sizing",
+            },
         )
+
+        st.caption(
+            "Grade guide: A/B = strongest current plays, C = smaller single, Lean = watch/small only, "
+            "D = early monitor grade. Refresh later for confirmed lineups/weather and market movement. "
+            "Playable-to keeps roughly a 1.5 percentage-point edge versus the current model fair probability."
+        )
+
+        st.markdown("### Quick add to tracker")
+        pick_label = st.selectbox("Card pick", top_df["play"].tolist(), key="card_pick")
+        selected = top_df.loc[top_df["play"] == pick_label].iloc[0]
+        stake = st.number_input("Stake", min_value=0.0, value=10.0, step=1.0, key="card_stake")
+        notes = st.text_input(
+            "Notes",
+            value=(
+                f"{selected['recommendation']}; grade {selected['grade']}; "
+                f"edge {selected['edge_pct']:.2%}; playable to {selected['playable_to_label']}"
+            ),
+            key="card_notes",
+        )
+        if st.button("Add card pick"):
+            add_bet(
+                event_date=str(pd.to_datetime(selected["commence_time"]).date()),
+                bet_type="Moneyline",
+                play=selected["play"],
+                book=selected["best_book"],
+                odds=int(selected["best_price"]),
+                stake=float(stake),
+                notes=notes,
+            )
+            st.success("Pick added to tracker.")
+
+    st.markdown("### Small parlay ideas")
+    parlay_pool = playable_df[playable_df["grade"].isin(["A", "B", "C", "Lean"])] if not playable_df.empty else playable_df
+    two_leg = build_parlays(parlay_pool, legs=2).head(5) if not parlay_pool.empty else pd.DataFrame()
+    if two_leg.empty:
+        st.info("No 2-leg parlay ideas available from the current graded plays.")
+    else:
+        two_leg_display = pct_display_frame(two_leg, ["estimated_hit_prob"])
+        st.dataframe(
+            two_leg_display,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "estimated_hit_prob": st.column_config.NumberColumn("Estimated hit %", format="%.2f%%"),
+                "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
+                "parlay_price": st.column_config.NumberColumn("Parlay odds"),
+            },
+        )
+
+    st.markdown("### HR props workflow")
+    st.write(
+        "Use the HR Props tab for game-level dinger prices. Moneyline scoring now has real MLB factors; "
+        "the next prop-specific upgrade is adding batter power and opposing-pitcher HR risk to the HR board."
+    )
 
 with ml_tab:
     st.subheader("Moneyline board")
@@ -426,7 +676,7 @@ with factors_tab:
         "This shows the baseball inputs that nudge the no-vig market probability. "
         "The market remains the anchor; these factors are intentionally modest adjustments."
     )
-    if model_mode == "Market only":
+    if model_mode == "Market only (fast early grade)":
         st.info("Model is set to Market only. Switch to 'Market + MLB factors' in the sidebar to use this tab.")
     elif features_df.empty:
         st.info("No MLB factor rows loaded. This tab populates only when you switch the sidebar to Market + MLB factors.")
@@ -598,4 +848,7 @@ with raw_tab:
     st.subheader("Raw odds")
     st.dataframe(raw_df, use_container_width=True, hide_index=True)
     with st.expander("Raw JSON"):
-        st.json(events)
+        if st.button("Show raw JSON", key="show_raw_json"):
+            st.json(events)
+        else:
+            st.caption("Raw JSON is hidden until requested to keep the app lighter on normal loads.")
