@@ -29,6 +29,40 @@ st.caption("Daily moneyline value, MLB-factor scoring, HR prop line-shopping, pa
 ET = "America/New_York"
 GRADE_ORDER = {"No play": 0, "Lean": 1, "C": 2, "B": 3, "A": 4}
 
+PERCENT_COLUMNS = {
+    "fair_prob",
+    "market_fair_prob",
+    "model_prob_delta",
+    "best_implied_prob",
+    "edge_pct",
+    "estimated_hit_prob",
+    "raw_implied_prob",
+    "team_win_pct",
+    "opp_team_win_pct",
+    "record_adj",
+    "offense_adj",
+    "team_pitching_adj",
+    "starter_adj",
+    "home_adj",
+    "factor_adjustment",
+    "factor_confidence",
+}
+
+
+def pct_display_frame(df: pd.DataFrame, columns: set[str] | list[str] | None = None) -> pd.DataFrame:
+    """Return a display-only copy where probability decimals are scaled to percentage points.
+
+    Streamlit NumberColumn uses printf-style formatting, so 0.5427 with %.2f%% would
+    display as 0.54%. Scaling to 54.27 first displays the intended 54.27%.
+    """
+    if df.empty:
+        return df.copy()
+    out = df.copy()
+    target_cols = set(columns or PERCENT_COLUMNS)
+    for col in target_cols.intersection(out.columns):
+        out[col] = pd.to_numeric(out[col], errors="coerce") * 100
+    return out
+
 
 def format_american(odds: float | int | None) -> str:
     if odds is None or pd.isna(odds):
@@ -228,6 +262,7 @@ with today_tab:
                 "factor_summary",
             ]
             show = top_df[[c for c in show_cols if c in top_df.columns]].copy()
+            show = pct_display_frame(show)
             st.dataframe(
                 show,
                 use_container_width=True,
@@ -235,11 +270,11 @@ with today_tab:
                 column_config={
                     "commence_time_et": st.column_config.DatetimeColumn("Start ET"),
                     "best_book": "Best book",
-                    "fair_prob": st.column_config.NumberColumn("Model win %", format="%.2%"),
-                    "market_fair_prob": st.column_config.NumberColumn("Market win %", format="%.2%"),
-                    "model_prob_delta": st.column_config.NumberColumn("MLB factor +/-", format="%.2%"),
-                    "best_implied_prob": st.column_config.NumberColumn("Best implied %", format="%.2%"),
-                    "edge_pct": st.column_config.NumberColumn("Edge", format="%.2%"),
+                    "fair_prob": st.column_config.NumberColumn("Model win %", format="%.2f%%"),
+                    "market_fair_prob": st.column_config.NumberColumn("Market win %", format="%.2f%%"),
+                    "model_prob_delta": st.column_config.NumberColumn("MLB factor +/-", format="%.2f%%"),
+                    "best_implied_prob": st.column_config.NumberColumn("Best implied %", format="%.2f%%"),
+                    "edge_pct": st.column_config.NumberColumn("Edge", format="%.2f%%"),
                     "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
                     "playable_to_label": "Playable to",
                 },
@@ -280,12 +315,13 @@ with today_tab:
         if two_leg.empty:
             st.info("No 2-leg parlay ideas available from the current graded plays.")
         else:
+            two_leg_display = pct_display_frame(two_leg, ["estimated_hit_prob"])
             st.dataframe(
-                two_leg,
+                two_leg_display,
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "estimated_hit_prob": st.column_config.NumberColumn("Estimated hit %", format="%.2%"),
+                    "estimated_hit_prob": st.column_config.NumberColumn("Estimated hit %", format="%.2f%%"),
                     "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
                     "parlay_price": st.column_config.NumberColumn("Parlay odds"),
                 },
@@ -310,16 +346,17 @@ with ml_tab:
         ]
         display = plays_df[[c for c in display_cols if c in plays_df.columns]].copy()
         display["commence_time"] = to_et(display["commence_time"])
+        display = pct_display_frame(display)
         st.dataframe(
             display,
             use_container_width=True,
             column_config={
                 "commence_time": st.column_config.DatetimeColumn("Start ET"),
-                "fair_prob": st.column_config.NumberColumn("Model win %", format="%.2%"),
-                "market_fair_prob": st.column_config.NumberColumn("Market win %", format="%.2%"),
-                "model_prob_delta": st.column_config.NumberColumn("MLB factor +/-", format="%.2%"),
-                "best_implied_prob": st.column_config.NumberColumn("Best implied %", format="%.2%"),
-                "edge_pct": st.column_config.NumberColumn("Edge", format="%.2%"),
+                "fair_prob": st.column_config.NumberColumn("Model win %", format="%.2f%%"),
+                "market_fair_prob": st.column_config.NumberColumn("Market win %", format="%.2f%%"),
+                "model_prob_delta": st.column_config.NumberColumn("MLB factor +/-", format="%.2f%%"),
+                "best_implied_prob": st.column_config.NumberColumn("Best implied %", format="%.2f%%"),
+                "edge_pct": st.column_config.NumberColumn("Edge", format="%.2f%%"),
                 "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
                 "fair_american": st.column_config.NumberColumn("Fair line"),
                 "playable_to_label": "Playable to",
@@ -390,21 +427,22 @@ with factors_tab:
             "factor_confidence",
             "factor_summary",
         ]
+        factor_display = pct_display_frame(factor_show[[c for c in factor_cols if c in factor_show.columns]])
         st.dataframe(
-            factor_show[[c for c in factor_cols if c in factor_show.columns]],
+            factor_display,
             use_container_width=True,
             hide_index=True,
             column_config={
                 "commence_time_et": st.column_config.DatetimeColumn("Start ET"),
-                "team_win_pct": st.column_config.NumberColumn("Win %", format="%.2%"),
-                "opp_team_win_pct": st.column_config.NumberColumn("Opp win %", format="%.2%"),
-                "record_adj": st.column_config.NumberColumn("Record adj", format="%.2%"),
-                "offense_adj": st.column_config.NumberColumn("Offense adj", format="%.2%"),
-                "team_pitching_adj": st.column_config.NumberColumn("Team pitching adj", format="%.2%"),
-                "starter_adj": st.column_config.NumberColumn("Starter adj", format="%.2%"),
-                "home_adj": st.column_config.NumberColumn("Home adj", format="%.2%"),
-                "factor_adjustment": st.column_config.NumberColumn("Raw factor adj", format="%.2%"),
-                "factor_confidence": st.column_config.NumberColumn("Data confidence", format="%.2%"),
+                "team_win_pct": st.column_config.NumberColumn("Win %", format="%.2f%%"),
+                "opp_team_win_pct": st.column_config.NumberColumn("Opp win %", format="%.2f%%"),
+                "record_adj": st.column_config.NumberColumn("Record adj", format="%.2f%%"),
+                "offense_adj": st.column_config.NumberColumn("Offense adj", format="%.2f%%"),
+                "team_pitching_adj": st.column_config.NumberColumn("Team pitching adj", format="%.2f%%"),
+                "starter_adj": st.column_config.NumberColumn("Starter adj", format="%.2f%%"),
+                "home_adj": st.column_config.NumberColumn("Home adj", format="%.2f%%"),
+                "factor_adjustment": st.column_config.NumberColumn("Raw factor adj", format="%.2f%%"),
+                "factor_confidence": st.column_config.NumberColumn("Data confidence", format="%.2f%%"),
             },
         )
         st.caption(
@@ -439,12 +477,16 @@ with hr_tab:
                     if best_props.empty:
                         st.info("No Over/Yes prop rows found for this game/market.")
                     else:
-                        st.dataframe(
+                        best_props_display = pct_display_frame(
                             best_props[["game", "player", "outcome", "point", "best_price", "best_book", "raw_implied_prob", "play"]],
+                            ["raw_implied_prob"],
+                        )
+                        st.dataframe(
+                            best_props_display,
                             use_container_width=True,
                             hide_index=True,
                             column_config={
-                                "raw_implied_prob": st.column_config.NumberColumn("Raw implied %", format="%.2%")
+                                "raw_implied_prob": st.column_config.NumberColumn("Raw implied %", format="%.2f%%")
                             },
                         )
                 except Exception as e:
@@ -460,12 +502,13 @@ with parlay_tab:
     if parlays.empty:
         st.info("No parlays available with the selected filters.")
     else:
+        parlays_display = pct_display_frame(parlays.head(20), ["estimated_hit_prob"])
         st.dataframe(
-            parlays.head(20),
+            parlays_display,
             use_container_width=True,
             hide_index=True,
             column_config={
-                "estimated_hit_prob": st.column_config.NumberColumn("Estimated hit %", format="%.2%"),
+                "estimated_hit_prob": st.column_config.NumberColumn("Estimated hit %", format="%.2f%%"),
                 "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
                 "parlay_price": st.column_config.NumberColumn("Parlay odds"),
             },
