@@ -19,14 +19,27 @@ def decimal_to_american(decimal_odds: float) -> int:
     return int(round(-100 / (decimal_odds - 1)))
 
 
-def build_parlays(picks_df: pd.DataFrame, legs: int = 2, max_rows: int = 15) -> pd.DataFrame:
-    """Build simple parlays from ranked picks, avoiding duplicate games."""
+def build_parlays(
+    picks_df: pd.DataFrame,
+    legs: int = 2,
+    max_rows: int = 15,
+    max_combos: int = 2500,
+) -> pd.DataFrame:
+    """Build simple parlays from ranked picks, avoiding duplicate games.
+
+    max_combos prevents 6-8 leg requests from creating a large combination
+    explosion on Streamlit Cloud.
+    """
     if picks_df.empty or len(picks_df) < legs:
         return pd.DataFrame()
 
     base = picks_df.head(max_rows).copy()
     rows = []
+    evaluated = 0
     for combo in itertools.combinations(base.to_dict("records"), legs):
+        evaluated += 1
+        if evaluated > max_combos:
+            break
         event_ids = [c.get("event_id") for c in combo]
         if len(set(event_ids)) != len(event_ids):
             continue
