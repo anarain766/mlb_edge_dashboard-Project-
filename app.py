@@ -27,7 +27,7 @@ st.caption("Daily moneyline value, MLB-factor scoring, HR prop line-shopping, pa
 
 
 ET = "America/New_York"
-GRADE_ORDER = {"No play": 0, "Lean": 1, "C": 2, "B": 3, "A": 4}
+GRADE_ORDER = {"D": 0, "Lean": 1, "C": 2, "B": 3, "A": 4}
 
 PERCENT_COLUMNS = {
     "fair_prob",
@@ -81,7 +81,7 @@ def playable_to_price(fair_prob: float | None, min_edge: float = 0.015) -> int |
 
 
 def make_recommendation(row: pd.Series) -> str:
-    grade = row.get("grade", "No play")
+    grade = row.get("grade", "D")
     edge = row.get("edge_pct", 0)
     if grade in {"A", "B"}:
         return "Play"
@@ -90,24 +90,44 @@ def make_recommendation(row: pd.Series) -> str:
     if grade == "Lean":
         return "Lean only"
     if pd.notna(edge) and edge > 0:
-        return "Watch price"
-    return "Pass"
+        return "Early watch"
+    return "Early grade"
+
+
+def refresh_status_for_time(commence_time) -> str:
+    """Label whether this is an early read or closer-to-first-pitch refresh."""
+    game_time = pd.to_datetime(commence_time, errors="coerce", utc=True)
+    if pd.isna(game_time):
+        return "Refresh later"
+    game_time_et = game_time.tz_convert(ET)
+    now_et = pd.Timestamp.now(tz=ET)
+    hours_to_first_pitch = (game_time_et - now_et).total_seconds() / 3600
+    if hours_to_first_pitch <= -0.25:
+        return "Started/live"
+    if hours_to_first_pitch <= 1.25:
+        return "Final check"
+    if hours_to_first_pitch <= 3.5:
+        return "Lineup/weather refresh"
+    return "Early grade"
 
 
 def add_card_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     out = df.copy()
+    out["grade"] = out["grade"].fillna("D").replace({"No play": "D"})
     out["grade_rank"] = out["grade"].map(GRADE_ORDER).fillna(0)
     out["playable_to"] = out["fair_prob"].apply(playable_to_price)
     out["playable_to_label"] = out["playable_to"].apply(format_american)
     out["recommendation"] = out.apply(make_recommendation, axis=1)
+    out["refresh_status"] = out["commence_time"].apply(refresh_status_for_time)
     out["card_score"] = (
         out["grade_rank"].astype(float) * 100
         + out["edge_pct"].fillna(0).astype(float) * 1000
         + out["ev_per_$1"].fillna(0).astype(float) * 100
+        + out["fair_prob"].fillna(0).astype(float) * 10
     )
-    return out.sort_values(["grade_rank", "ev_per_$1", "edge_pct"], ascending=False)
+    return out.sort_values(["grade_rank", "ev_per_$1", "edge_pct", "fair_prob"], ascending=False)
 
 
 def to_et(series: pd.Series) -> pd.Series:
@@ -153,7 +173,7 @@ with st.sidebar:
         value="",
         help="Comma-separated keys like fanduel,draftkings,betmgm. Leave blank for all available books in the selected region.",
     )
-    min_grade = st.selectbox("Minimum grade", ["All", "Lean", "C", "B", "A"], index=0)
+    min_grade = st.selectbox("Minimum grade", ["All", "D", "Lean", "C", "B", "A"], index=0)
 
     st.divider()
     st.subheader("Model")
@@ -220,8 +240,9 @@ today_tab, ml_tab, factors_tab, hr_tab, parlay_tab, tracker_tab, raw_tab = st.ta
 with today_tab:
     st.subheader("Today's card")
     st.write(
-        "This tab turns the odds board into a short betting card. "
+        "This tab turns the odds board into an early betting card. "
         f"Current scoring: {model_note} "
+        "Grades update when you refresh odds later in the day; early D grades are monitor/rankings, not automatic bets. "
         "Only play a pick if the price is still at or better than the playable-to number."
     )
 
@@ -231,7 +252,7 @@ with today_tab:
         card_df = plays_df.copy()
         card_df["commence_time_et"] = to_et(card_df["commence_time"])
         playable_df = card_df[card_df["grade"].isin(["A", "B", "C", "Lean"])].copy()
-        top_df = playable_df.head(8)
+        top_df = card_df.head(8)
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Playable MLs", len(playable_df))
@@ -241,9 +262,9 @@ with today_tab:
         next_start = card_df["commence_time_et"].min()
         c4.metric("Next game ET", next_start.strftime("%-I:%M %p") if pd.notna(next_start) else "")
 
-        st.markdown("### Best ML plays")
+        st.markdown("### Best ML picks — early card")
         if top_df.empty:
-            st.info("No graded ML plays right now. Check again closer to lineups or after market movement.")
+            st.info("No moneyline candidates loaded yet. Refresh odds after the slate updates.")
         else:
             show_cols = [
                 "commence_time_et",
@@ -259,6 +280,7 @@ with today_tab:
                 "playable_to_label",
                 "grade",
                 "recommendation",
+                "refresh_status",
                 "factor_summary",
             ]
             show = top_df[[c for c in show_cols if c in top_df.columns]].copy()
@@ -281,7 +303,8 @@ with today_tab:
             )
 
             st.caption(
-                "Grade guide: A/B = strongest edges, C = smaller single, Lean = watch/small only. "
+                "Grade guide: A/B = strongest current plays, C = smaller single, Lean = watch/small only, "
+                "D = early monitor grade. Refresh later for confirmed lineups/weather and market movement. "
                 "Playable-to keeps roughly a 1.5 percentage-point edge versus the current model fair probability."
             )
 
@@ -495,10 +518,18 @@ with hr_tab:
 with parlay_tab:
     st.subheader("Parlay builder")
     st.write("Parlays are high variance. This builder avoids duplicate games and uses the top ranked ML edges.")
-    legs = st.selectbox("Legs", [2, 3], index=0)
-    candidate_grades = st.multiselect("Use grades", ["A", "B", "C", "Lean"], default=["A", "B", "C", "Lean"])
+    legs = st.selectbox("Legs", list(range(2, 9)), index=0)
+    candidate_grades = st.multiselect("Use grades", ["A", "B", "C", "Lean", "D"], default=["A", "B", "C", "Lean"])
+    max_candidates = st.slider(
+        "Max candidate picks to combine",
+        min_value=8,
+        max_value=18,
+        value=12,
+        step=1,
+        help="Higher numbers create more combinations. Keep this lower for 6-8 leg parlays.",
+    )
     parlay_candidates = plays_df[plays_df["grade"].isin(candidate_grades)] if not plays_df.empty else plays_df
-    parlays = build_parlays(parlay_candidates, legs=legs)
+    parlays = build_parlays(parlay_candidates, legs=legs, max_rows=max_candidates)
     if parlays.empty:
         st.info("No parlays available with the selected filters.")
     else:
