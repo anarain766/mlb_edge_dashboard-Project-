@@ -46,8 +46,15 @@ def expected_value_per_unit(fair_prob: float | None, odds: float | int | None) -
 
 
 def grade_play(edge_pct: float | None, ev_pct: float | None) -> str:
+    """Grade every moneyline candidate, even early in the day.
+
+    A/B/C/Lean are playable-quality grades from the current model. D is an
+    early/monitor grade, not an automatic bet. This avoids hiding the best
+    early moneyline candidates behind a "No play" label before lineups,
+    weather, and market movement have fully developed.
+    """
     if edge_pct is None or pd.isna(edge_pct) or ev_pct is None or pd.isna(ev_pct):
-        return "No play"
+        return "D"
     if edge_pct >= 0.06 and ev_pct >= 0.08:
         return "A"
     if edge_pct >= 0.04 and ev_pct >= 0.05:
@@ -56,7 +63,7 @@ def grade_play(edge_pct: float | None, ev_pct: float | None) -> str:
         return "C"
     if edge_pct >= 0.015 and ev_pct >= 0.01:
         return "Lean"
-    return "No play"
+    return "D"
 
 
 def flatten_h2h_odds(events: list[dict]) -> pd.DataFrame:
