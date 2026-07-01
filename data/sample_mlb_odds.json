@@ -1,0 +1,41 @@
+[
+  {
+    "id": "sample-yankees-tigers",
+    "sport_key": "baseball_mlb",
+    "sport_title": "MLB",
+    "commence_time": "2026-07-01T17:35:00Z",
+    "home_team": "New York Yankees",
+    "away_team": "Detroit Tigers",
+    "bookmakers": [
+      {"key":"fanduel","title":"FanDuel","markets":[{"key":"h2h","outcomes":[{"name":"Detroit Tigers","price":120},{"name":"New York Yankees","price":-142}]}]},
+      {"key":"draftkings","title":"DraftKings","markets":[{"key":"h2h","outcomes":[{"name":"Detroit Tigers","price":125},{"name":"New York Yankees","price":-145}]}]},
+      {"key":"betmgm","title":"BetMGM","markets":[{"key":"h2h","outcomes":[{"name":"Detroit Tigers","price":112},{"name":"New York Yankees","price":-125}]}]}
+    ]
+  },
+  {
+    "id": "sample-rays-royals",
+    "sport_key": "baseball_mlb",
+    "sport_title": "MLB",
+    "commence_time": "2026-07-01T23:40:00Z",
+    "home_team": "Kansas City Royals",
+    "away_team": "Tampa Bay Rays",
+    "bookmakers": [
+      {"key":"fanduel","title":"FanDuel","markets":[{"key":"h2h","outcomes":[{"name":"Tampa Bay Rays","price":-136},{"name":"Kansas City Royals","price":116}]}]},
+      {"key":"draftkings","title":"DraftKings","markets":[{"key":"h2h","outcomes":[{"name":"Tampa Bay Rays","price":-122},{"name":"Kansas City Royals","price":102}]}]},
+      {"key":"betmgm","title":"BetMGM","markets":[{"key":"h2h","outcomes":[{"name":"Tampa Bay Rays","price":-135},{"name":"Kansas City Royals","price":115}]}]}
+    ]
+  },
+  {
+    "id": "sample-cubs-padres",
+    "sport_key": "baseball_mlb",
+    "sport_title": "MLB",
+    "commence_time": "2026-07-01T18:20:00Z",
+    "home_team": "Chicago Cubs",
+    "away_team": "San Diego Padres",
+    "bookmakers": [
+      {"key":"fanduel","title":"FanDuel","markets":[{"key":"h2h","outcomes":[{"name":"San Diego Padres","price":102},{"name":"Chicago Cubs","price":-120}]}]},
+      {"key":"draftkings","title":"DraftKings","markets":[{"key":"h2h","outcomes":[{"name":"San Diego Padres","price":105},{"name":"Chicago Cubs","price":-125}]}]},
+      {"key":"betmgm","title":"BetMGM","markets":[{"key":"h2h","outcomes":[{"name":"San Diego Padres","price":100},{"name":"Chicago Cubs","price":-118}]}]}
+    ]
+  }
+]
