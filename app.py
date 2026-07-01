@@ -5,6 +5,7 @@ import os
 
 import pandas as pd
 import streamlit as st
+import anthropic
 
 from src.odds_api import OddsAPIClient, OddsAPIError, load_sample_odds
 from src.scoring import (
@@ -865,3 +866,60 @@ with raw_tab:
             st.json(events)
         else:
             st.caption("Raw JSON is hidden until requested to keep the app lighter on normal loads.")
+            
+# ---------------------------------------------------------------------------
+# Claude's take (simple bolt-on section)
+# ---------------------------------------------------------------------------
+
+def get_anthropic_key() -> str | None:
+    try:
+        key = st.secrets.get("ANTHROPIC_API_KEY")
+    except Exception:
+        key = None
+    return key or os.getenv("ANTHROPIC_API_KEY")
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_claude_take(card_json: str, date_str: str) -> str:
+    api_key = get_anthropic_key()
+    if not api_key:
+        return "_Set ANTHROPIC_API_KEY in Streamlit secrets to enable this section._"
+
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model="claude-sonnet-5",
+        max_tokens=1200,
+        tools=[{"type": "web_search_20250305", "name": "web_search"}],
+        messages=[{
+            "role": "user",
+            "content": f"""Here is today's ({date_str}) MLB moneyline board from my own model,
+already graded and edge-ranked (JSON below). Don't recompute odds or edges — trust these numbers.
+
+Search for anything from the last few hours that could change the picture — injury news,
+weather, bullpen fatigue, lineup changes — and tell me which graded plays you'd still trust
+and which to downgrade or flag, and why. Concise markdown list, one line per flagged pick.
+
+BOARD:
+{card_json}"""
+        }]
+    )
+    return "\n\n".join(b.text for b in response.content if b.type == "text")
+
+
+st.divider()
+st.markdown("## 🔵 Claude's take")
+st.caption("News check on the graded board above — injuries, weather, bullpen fatigue.")
+
+if st.button("Get Claude's take", key="claude_take_bottom_button"):
+    if top_df.empty:
+        st.info("No graded plays loaded yet — refresh odds first.")
+    else:
+        card_json = top_df[
+            [c for c in ["game", "play", "best_book", "fair_prob", "edge_pct", "grade", "factor_summary"] if c in top_df.columns]
+        ].to_json(orient="records")
+        with st.spinner("Checking today's news against the board..."):
+            st.session_state["claude_take"] = get_claude_take(
+                card_json, str(datetime.now(timezone.utc).date())
+            )
+
+st.markdown(st.session_state.get("claude_take", "*Click above to generate*"))
