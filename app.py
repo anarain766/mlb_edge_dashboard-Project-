@@ -921,11 +921,5 @@ if st.button("Get Claude's take", key="claude_take_bottom_button"):
             st.session_state["claude_take"] = get_claude_take(
                 card_json, str(datetime.now(timezone.utc).date())
             )
-            
-if st.button("Get Claude's take", key="claude_take_bottom_button"):
-    ...
-    response = client.messages.create(...)
-    st.write("DEBUG stop_reason:", response.stop_reason)
-    st.write("DEBUG block types:", [b.type for b in response.content])
 
 st.markdown(st.session_state.get("claude_take", "*Click above to generate*"))
