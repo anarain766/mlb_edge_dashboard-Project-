@@ -888,7 +888,7 @@ def get_claude_take(card_json: str, date_str: str) -> str:
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model="claude-sonnet-5",
-        max_tokens=1200,
+        max_tokens=3000, # up from 1200 — leave headroom after tool results
         tools=[{"type": "web_search_20250305", "name": "web_search"}],
         messages=[{
             "role": "user",
@@ -921,5 +921,11 @@ if st.button("Get Claude's take", key="claude_take_bottom_button"):
             st.session_state["claude_take"] = get_claude_take(
                 card_json, str(datetime.now(timezone.utc).date())
             )
+            
+if st.button("Get Claude's take", key="claude_take_bottom_button"):
+    ...
+    response = client.messages.create(...)
+    st.write("DEBUG stop_reason:", response.stop_reason)
+    st.write("DEBUG block types:", [b.type for b in response.content])
 
 st.markdown(st.session_state.get("claude_take", "*Click above to generate*"))
