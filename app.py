@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
 import os
 
 import pandas as pd
@@ -13,6 +12,8 @@ from src.scoring import (
     best_moneyline_plays,
     flatten_player_prop_odds,
     best_prop_prices,
+    american_to_implied,
+    prob_to_american,
 )
 from src.parlay import build_parlays
 from src.storage import init_db, add_bet, load_bets, update_result
@@ -21,6 +22,60 @@ from src.storage import init_db, add_bet, load_bets, update_result
 st.set_page_config(page_title="MLB Edge Dashboard", page_icon="⚾", layout="wide")
 st.title("⚾ MLB Edge Dashboard")
 st.caption("Daily moneyline value, HR prop line-shopping, parlay ideas, and bet tracking.")
+
+
+ET = "America/New_York"
+GRADE_ORDER = {"No play": 0, "Lean": 1, "C": 2, "B": 3, "A": 4}
+
+
+def format_american(odds: float | int | None) -> str:
+    if odds is None or pd.isna(odds):
+        return ""
+    return f"{int(round(float(odds))):+d}"
+
+
+def playable_to_price(fair_prob: float | None, min_edge: float = 0.015) -> int | None:
+    """Worst acceptable American price while preserving at least min_edge probability edge."""
+    if fair_prob is None or pd.isna(fair_prob):
+        return None
+    max_implied = float(fair_prob) - min_edge
+    if max_implied <= 0.01 or max_implied >= 0.99:
+        return None
+    return prob_to_american(max_implied)
+
+
+def make_recommendation(row: pd.Series) -> str:
+    grade = row.get("grade", "No play")
+    edge = row.get("edge_pct", 0)
+    if grade in {"A", "B"}:
+        return "Play"
+    if grade == "C":
+        return "Small play"
+    if grade == "Lean":
+        return "Lean only"
+    if pd.notna(edge) and edge > 0:
+        return "Watch price"
+    return "Pass"
+
+
+def add_card_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    out = df.copy()
+    out["grade_rank"] = out["grade"].map(GRADE_ORDER).fillna(0)
+    out["playable_to"] = out["fair_prob"].apply(playable_to_price)
+    out["playable_to_label"] = out["playable_to"].apply(format_american)
+    out["recommendation"] = out.apply(make_recommendation, axis=1)
+    out["card_score"] = (
+        out["grade_rank"].astype(float) * 100
+        + out["edge_pct"].fillna(0).astype(float) * 1000
+        + out["ev_per_$1"].fillna(0).astype(float) * 100
+    )
+    return out.sort_values(["grade_rank", "ev_per_$1", "edge_pct"], ascending=False)
+
+
+def to_et(series: pd.Series) -> pd.Series:
+    return pd.to_datetime(series, errors="coerce", utc=True).dt.tz_convert(ET)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -74,20 +129,127 @@ except Exception as e:
     st.stop()
 
 if using_sample:
-    st.warning("Using sample odds. Add ODDS_API_KEY to .streamlit/secrets.toml to pull live odds.")
+    st.warning("Using sample odds. Add ODDS_API_KEY to Streamlit Secrets to pull live odds.")
+else:
+    st.success("Live odds loaded.")
 
 raw_df = flatten_h2h_odds(events)
-plays_df = best_moneyline_plays(raw_df)
+plays_df = add_card_columns(best_moneyline_plays(raw_df))
 
-if not plays_df.empty:
-    grade_order = {"No play": 0, "Lean": 1, "C": 2, "B": 3, "A": 4}
-    plays_df["grade_rank"] = plays_df["grade"].map(grade_order).fillna(0)
-    if min_grade != "All":
-        plays_df = plays_df[plays_df["grade_rank"] >= grade_order[min_grade]]
+if not plays_df.empty and min_grade != "All":
+    plays_df = plays_df[plays_df["grade_rank"] >= GRADE_ORDER[min_grade]]
 
-ml_tab, hr_tab, parlay_tab, tracker_tab, raw_tab = st.tabs(
-    ["Moneyline Board", "HR Props", "Parlay Builder", "Bet Tracker", "Raw Odds"]
+today_tab, ml_tab, hr_tab, parlay_tab, tracker_tab, raw_tab = st.tabs(
+    ["Today's Card", "Moneyline Board", "HR Props", "Parlay Builder", "Bet Tracker", "Raw Odds"]
 )
+
+with today_tab:
+    st.subheader("Today's card")
+    st.write(
+        "This tab turns the odds board into a short betting card. It is still market-based: "
+        "it compares the best available line to the no-vig market consensus. "
+        "Only play a pick if the price is still at or better than the playable-to number."
+    )
+
+    if plays_df.empty:
+        st.info("No moneyline plays found with the current filters.")
+    else:
+        card_df = plays_df.copy()
+        card_df["commence_time_et"] = to_et(card_df["commence_time"])
+        playable_df = card_df[card_df["grade"].isin(["A", "B", "C", "Lean"])].copy()
+        top_df = playable_df.head(8)
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Playable MLs", len(playable_df))
+        c2.metric("A/B plays", int(card_df["grade"].isin(["A", "B"]).sum()))
+        best_edge = card_df["edge_pct"].max() if not card_df.empty else 0
+        c3.metric("Best edge", f"{best_edge:.2%}")
+        next_start = card_df["commence_time_et"].min()
+        c4.metric("Next game ET", next_start.strftime("%-I:%M %p") if pd.notna(next_start) else "")
+
+        st.markdown("### Best ML plays")
+        if top_df.empty:
+            st.info("No graded ML plays right now. Check again closer to lineups or after market movement.")
+        else:
+            show = top_df[[
+                "commence_time_et",
+                "game",
+                "play",
+                "best_book",
+                "fair_prob",
+                "best_implied_prob",
+                "edge_pct",
+                "ev_per_$1",
+                "playable_to_label",
+                "grade",
+                "recommendation",
+            ]].copy()
+            st.dataframe(
+                show,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "commence_time_et": st.column_config.DatetimeColumn("Start ET"),
+                    "best_book": "Best book",
+                    "fair_prob": st.column_config.NumberColumn("Fair win %", format="%.1%"),
+                    "best_implied_prob": st.column_config.NumberColumn("Best implied %", format="%.1%"),
+                    "edge_pct": st.column_config.NumberColumn("Edge", format="%.2%"),
+                    "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
+                    "playable_to_label": "Playable to",
+                },
+            )
+
+            st.caption(
+                "Grade guide: A/B = strongest market edges, C = smaller single, Lean = watch/small only. "
+                "Playable-to keeps roughly a 1.5 percentage-point edge versus the no-vig market estimate."
+            )
+
+            st.markdown("### Quick add to tracker")
+            pick_label = st.selectbox("Card pick", top_df["play"].tolist(), key="card_pick")
+            selected = top_df.loc[top_df["play"] == pick_label].iloc[0]
+            stake = st.number_input("Stake", min_value=0.0, value=10.0, step=1.0, key="card_stake")
+            notes = st.text_input(
+                "Notes",
+                value=(
+                    f"{selected['recommendation']}; grade {selected['grade']}; "
+                    f"edge {selected['edge_pct']:.2%}; playable to {selected['playable_to_label']}"
+                ),
+                key="card_notes",
+            )
+            if st.button("Add card pick"):
+                add_bet(
+                    event_date=str(pd.to_datetime(selected["commence_time"]).date()),
+                    bet_type="Moneyline",
+                    play=selected["play"],
+                    book=selected["best_book"],
+                    odds=int(selected["best_price"]),
+                    stake=float(stake),
+                    notes=notes,
+                )
+                st.success("Pick added to tracker.")
+
+        st.markdown("### Small parlay ideas")
+        parlay_pool = playable_df[playable_df["grade"].isin(["A", "B", "C", "Lean"])]
+        two_leg = build_parlays(parlay_pool, legs=2).head(5)
+        if two_leg.empty:
+            st.info("No 2-leg parlay ideas available from the current graded plays.")
+        else:
+            st.dataframe(
+                two_leg,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "estimated_hit_prob": st.column_config.NumberColumn("Estimated hit %", format="%.1%"),
+                    "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
+                    "parlay_price": st.column_config.NumberColumn("Parlay odds"),
+                },
+            )
+
+        st.markdown("### HR props workflow")
+        st.write(
+            "Use the HR Props tab for game-level dinger prices. The current HR tab is line-shopping only; "
+            "the next major upgrade is a true HR score using batter power, pitcher HR allowed, park, weather, and lineup spot."
+        )
 
 with ml_tab:
     st.subheader("Moneyline board")
@@ -100,9 +262,9 @@ with ml_tab:
     else:
         display = plays_df[[
             "commence_time", "game", "play", "best_book", "fair_prob", "fair_american",
-            "best_implied_prob", "edge_pct", "ev_per_$1", "grade"
+            "best_implied_prob", "edge_pct", "ev_per_$1", "playable_to_label", "grade", "recommendation"
         ]].copy()
-        display["commence_time"] = pd.to_datetime(display["commence_time"]).dt.tz_convert("America/New_York")
+        display["commence_time"] = to_et(display["commence_time"])
         st.dataframe(
             display,
             use_container_width=True,
@@ -113,15 +275,20 @@ with ml_tab:
                 "edge_pct": st.column_config.NumberColumn("Edge", format="%.2%"),
                 "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
                 "fair_american": st.column_config.NumberColumn("Fair line"),
+                "playable_to_label": "Playable to",
             },
             hide_index=True,
         )
 
         st.markdown("### Add a pick to tracker")
-        pick_label = st.selectbox("Pick", plays_df["play"].tolist())
+        pick_label = st.selectbox("Pick", plays_df["play"].tolist(), key="ml_pick")
         selected = plays_df.loc[plays_df["play"] == pick_label].iloc[0]
-        stake = st.number_input("Stake", min_value=0.0, value=10.0, step=1.0)
-        notes = st.text_input("Notes", value=f"Grade {selected['grade']}; edge {selected['edge_pct']:.2%}")
+        stake = st.number_input("Stake", min_value=0.0, value=10.0, step=1.0, key="ml_stake")
+        notes = st.text_input(
+            "Notes",
+            value=f"Grade {selected['grade']}; edge {selected['edge_pct']:.2%}; playable to {selected['playable_to_label']}",
+            key="ml_notes",
+        )
         if st.button("Add ML pick"):
             add_bet(
                 event_date=str(pd.to_datetime(selected["commence_time"]).date()),
