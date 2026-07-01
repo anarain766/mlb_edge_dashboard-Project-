@@ -432,7 +432,7 @@ def build_mlb_feature_frame(events: list[dict], season: int | None = None) -> pd
         ]:
             val = row.get(col)
             if pd.notna(val):
-                bits.append(f"{label} {float(val):+.1%}")
+                bits.append(f"{label} {float(val):+.2%}")
         return "; ".join(bits) if bits else "Market only"
 
     df["factor_summary"] = df.apply(summary, axis=1)
