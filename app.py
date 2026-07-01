@@ -353,6 +353,19 @@ def to_et(series: pd.Series) -> pd.Series:
     return pd.to_datetime(series, errors="coerce", utc=True).dt.tz_convert(ET)
 
 
+def format_start_et(value) -> str:
+    ts = pd.to_datetime(value, errors="coerce", utc=True)
+    if pd.isna(ts):
+        return ""
+    ts = ts.tz_convert(ET)
+    return ts.strftime("%I:%M %p").lstrip("0")
+
+
+def start_et_display(series: pd.Series) -> pd.Series:
+    out = pd.to_datetime(series, errors="coerce", utc=True).dt.tz_convert(ET).dt.strftime("%I:%M %p")
+    return out.str.replace(r"^0", "", regex=True).fillna("")
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def get_odds_data(api_key: str | None, regions: str, bookmakers: str | None):
     client = OddsAPIClient(api_key=api_key)
@@ -480,7 +493,7 @@ with today_tab:
 
     opinion_df = full_card_df.copy()
     if not opinion_df.empty:
-        opinion_df["commence_time_et"] = to_et(opinion_df["commence_time"])
+        opinion_df["commence_time_et"] = start_et_display(opinion_df["commence_time"])
 
     st.markdown("## My take — today's ML card")
     st.caption(
@@ -508,7 +521,7 @@ with today_tab:
 
     card_df = plays_df.copy()
     if not card_df.empty:
-        card_df["commence_time_et"] = to_et(card_df["commence_time"])
+        card_df["commence_time_et"] = start_et_display(card_df["commence_time"])
     playable_df = card_df[card_df["grade"].isin(["A", "B", "C", "Lean"])].copy() if not card_df.empty else card_df
     top_df = card_df.head(8) if not card_df.empty else card_df
 
@@ -517,8 +530,8 @@ with today_tab:
     c2.metric("A/B plays", int(card_df["grade"].isin(["A", "B"]).sum()) if not card_df.empty else 0)
     best_edge = card_df["edge_pct"].max() if not card_df.empty else 0
     c3.metric("Best edge", f"{best_edge:.2%}")
-    next_start = card_df["commence_time_et"].min() if not card_df.empty else pd.NaT
-    c4.metric("Next game ET", next_start.strftime("%-I:%M %p") if pd.notna(next_start) else "")
+    next_start = to_et(card_df["commence_time"]).min() if not card_df.empty else pd.NaT
+    c4.metric("Next game ET", next_start.strftime("%I:%M %p").lstrip("0") if pd.notna(next_start) else "")
 
     st.markdown("### Best ML picks — ranked card")
     if top_df.empty:
@@ -550,7 +563,7 @@ with today_tab:
             use_container_width=True,
             hide_index=True,
             column_config={
-                "commence_time_et": st.column_config.DatetimeColumn("Start ET"),
+                "commence_time_et": st.column_config.TextColumn("Start ET"),
                 "best_book": "Best book",
                 "fair_prob": st.column_config.NumberColumn("Model win %", format="%.2f%%"),
                 "market_fair_prob": st.column_config.NumberColumn("Market win %", format="%.2f%%"),
@@ -630,13 +643,13 @@ with ml_tab:
             "grade", "recommendation", "factor_summary"
         ]
         display = plays_df[[c for c in display_cols if c in plays_df.columns]].copy()
-        display["commence_time"] = to_et(display["commence_time"])
+        display["commence_time"] = start_et_display(display["commence_time"])
         display = pct_display_frame(display)
         st.dataframe(
             display,
             use_container_width=True,
             column_config={
-                "commence_time": st.column_config.DatetimeColumn("Start ET"),
+                "commence_time": st.column_config.TextColumn("Start ET"),
                 "fair_prob": st.column_config.NumberColumn("Model win %", format="%.2f%%"),
                 "market_fair_prob": st.column_config.NumberColumn("Market win %", format="%.2f%%"),
                 "model_prob_delta": st.column_config.NumberColumn("MLB factor +/-", format="%.2f%%"),
@@ -683,7 +696,7 @@ with factors_tab:
     else:
         factor_show = features_df.copy()
         if "commence_time" in factor_show.columns:
-            factor_show["commence_time_et"] = to_et(factor_show["commence_time"])
+            factor_show["commence_time_et"] = start_et_display(factor_show["commence_time"])
         factor_cols = [
             "commence_time_et",
             "game",
@@ -718,7 +731,7 @@ with factors_tab:
             use_container_width=True,
             hide_index=True,
             column_config={
-                "commence_time_et": st.column_config.DatetimeColumn("Start ET"),
+                "commence_time_et": st.column_config.TextColumn("Start ET"),
                 "team_win_pct": st.column_config.NumberColumn("Win %", format="%.2f%%"),
                 "opp_team_win_pct": st.column_config.NumberColumn("Opp win %", format="%.2f%%"),
                 "record_adj": st.column_config.NumberColumn("Record adj", format="%.2f%%"),
@@ -745,7 +758,7 @@ with hr_tab:
         st.info("HR props need a live Odds API key because player props are event-specific.")
     else:
         event_options = {
-            f"{e.get('away_team')} @ {e.get('home_team')} — {e.get('commence_time')}": e.get("id")
+            f"{e.get('away_team')} @ {e.get('home_team')} — {format_start_et(e.get('commence_time'))}": e.get("id")
             for e in events
         }
         if not event_options:
