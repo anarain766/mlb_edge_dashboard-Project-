@@ -903,7 +903,7 @@ BOARD:
 {card_json}"""
         }]
     )
-    return "\n\n".join(b.text for b in response.content if b.type == "text")
+    return "".join(b.text for b in response.content if b.type == "text")
 
 
 st.divider()
