@@ -23,7 +23,7 @@ from src.storage import init_db, add_bet, load_bets, update_result
 
 st.set_page_config(page_title="MLB Edge Dashboard", page_icon="⚾", layout="wide")
 st.title("⚾ MLB Edge Dashboard")
-st.caption("Daily moneyline value, MLB-factor scoring, HR prop line-shopping, parlay ideas, and bet tracking.")
+st.caption("Fast-loading daily moneyline grades, optional MLB-factor scoring, HR prop line-shopping, parlay ideas, and bet tracking.")
 
 
 ET = "America/New_York"
@@ -151,8 +151,8 @@ def get_event_prop_data(api_key: str | None, event_id: str, market: str, regions
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def get_mlb_factor_data(events: list[dict], season: int):
-    return build_mlb_feature_frame(events, season=season)
+def get_mlb_factor_data(events: list[dict], season: int, include_pitcher_stats: bool):
+    return build_mlb_feature_frame(events, season=season, include_pitcher_stats=include_pitcher_stats)
 
 
 def get_api_key() -> str | None:
@@ -177,8 +177,20 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Model")
-    model_mode = st.selectbox("Moneyline model", ["Market + MLB factors", "Market only"], index=0)
+    model_mode = st.selectbox(
+        "Moneyline model",
+        ["Market only (fast early grade)", "Market + MLB factors"],
+        index=0,
+        help="Use fast market-only grades first, then switch to MLB factors later for a deeper refresh.",
+    )
     model_season = st.number_input("MLB stats season", min_value=2020, max_value=2035, value=datetime.now().year, step=1)
+    include_pitcher_stats = False
+    if model_mode == "Market + MLB factors":
+        include_pitcher_stats = st.checkbox(
+            "Deep starter stat lookup",
+            value=False,
+            help="Adds probable-pitcher ERA/WHIP API calls. More complete, but slower on first load.",
+        )
     factor_influence = st.slider(
         "MLB factor influence",
         min_value=0.0,
@@ -211,11 +223,11 @@ else:
 raw_df = flatten_h2h_odds(events)
 base_plays_df = best_moneyline_plays(raw_df)
 features_df = pd.DataFrame()
-model_note = "Market-only: no-vig consensus compared to best available price."
+model_note = "Fast early grade: no-vig market consensus compared to best available price. Switch to MLB factors later for a deeper refresh."
 
 if model_mode == "Market + MLB factors" and not base_plays_df.empty:
     try:
-        features_df = get_mlb_factor_data(events, int(model_season))
+        features_df = get_mlb_factor_data(events, int(model_season), bool(include_pitcher_stats))
         if not features_df.empty:
             base_plays_df = apply_mlb_factor_adjustments(base_plays_df, features_df, factor_influence=float(factor_influence))
             model_note = (
@@ -417,7 +429,7 @@ with factors_tab:
     if model_mode == "Market only":
         st.info("Model is set to Market only. Switch to 'Market + MLB factors' in the sidebar to use this tab.")
     elif features_df.empty:
-        st.info("No MLB factor rows loaded. This can happen if the MLB stats endpoint is unavailable or the slate is from sample data.")
+        st.info("No MLB factor rows loaded. This tab populates only when you switch the sidebar to Market + MLB factors.")
     else:
         factor_show = features_df.copy()
         if "commence_time" in factor_show.columns:
@@ -517,33 +529,44 @@ with hr_tab:
 
 with parlay_tab:
     st.subheader("Parlay builder")
-    st.write("Parlays are high variance. This builder avoids duplicate games and uses the top ranked ML edges.")
+    st.write("Parlays are high variance. This builder avoids duplicate games and uses the top ranked ML edges. It now waits until you click Generate so the app loads faster.")
     legs = st.selectbox("Legs", list(range(2, 9)), index=0)
-    candidate_grades = st.multiselect("Use grades", ["A", "B", "C", "Lean", "D"], default=["A", "B", "C", "Lean"])
+    candidate_grades = st.multiselect("Use grades", ["A", "B", "C", "Lean", "D"], default=["A", "B", "C", "Lean", "D"])
     max_candidates = st.slider(
         "Max candidate picks to combine",
-        min_value=8,
-        max_value=18,
-        value=12,
+        min_value=6,
+        max_value=14,
+        value=8,
         step=1,
         help="Higher numbers create more combinations. Keep this lower for 6-8 leg parlays.",
     )
-    parlay_candidates = plays_df[plays_df["grade"].isin(candidate_grades)] if not plays_df.empty else plays_df
-    parlays = build_parlays(parlay_candidates, legs=legs, max_rows=max_candidates)
-    if parlays.empty:
-        st.info("No parlays available with the selected filters.")
+    max_combos = st.slider(
+        "Max combinations to evaluate",
+        min_value=250,
+        max_value=5000,
+        value=1500,
+        step=250,
+        help="Safety cap that keeps 6-8 leg parlays from slowing down the app.",
+    )
+    if st.button("Generate parlay ideas"):
+        parlay_candidates = plays_df[plays_df["grade"].isin(candidate_grades)] if not plays_df.empty else plays_df
+        parlays = build_parlays(parlay_candidates, legs=legs, max_rows=max_candidates, max_combos=max_combos)
+        if parlays.empty:
+            st.info("No parlays available with the selected filters.")
+        else:
+            parlays_display = pct_display_frame(parlays.head(20), ["estimated_hit_prob"])
+            st.dataframe(
+                parlays_display,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "estimated_hit_prob": st.column_config.NumberColumn("Estimated hit %", format="%.2f%%"),
+                    "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
+                    "parlay_price": st.column_config.NumberColumn("Parlay odds"),
+                },
+            )
     else:
-        parlays_display = pct_display_frame(parlays.head(20), ["estimated_hit_prob"])
-        st.dataframe(
-            parlays_display,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "estimated_hit_prob": st.column_config.NumberColumn("Estimated hit %", format="%.2f%%"),
-                "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
-                "parlay_price": st.column_config.NumberColumn("Parlay odds"),
-            },
-        )
+        st.info("Choose your grades/leg count, then click Generate parlay ideas. This keeps the daily card fast on load.")
 
 with tracker_tab:
     st.subheader("Bet tracker")
