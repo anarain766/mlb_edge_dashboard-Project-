@@ -235,10 +235,10 @@ with today_tab:
                 column_config={
                     "commence_time_et": st.column_config.DatetimeColumn("Start ET"),
                     "best_book": "Best book",
-                    "fair_prob": st.column_config.NumberColumn("Model win %", format="%.1%"),
-                    "market_fair_prob": st.column_config.NumberColumn("Market win %", format="%.1%"),
+                    "fair_prob": st.column_config.NumberColumn("Model win %", format="%.2%"),
+                    "market_fair_prob": st.column_config.NumberColumn("Market win %", format="%.2%"),
                     "model_prob_delta": st.column_config.NumberColumn("MLB factor +/-", format="%.2%"),
-                    "best_implied_prob": st.column_config.NumberColumn("Best implied %", format="%.1%"),
+                    "best_implied_prob": st.column_config.NumberColumn("Best implied %", format="%.2%"),
                     "edge_pct": st.column_config.NumberColumn("Edge", format="%.2%"),
                     "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
                     "playable_to_label": "Playable to",
@@ -285,7 +285,7 @@ with today_tab:
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "estimated_hit_prob": st.column_config.NumberColumn("Estimated hit %", format="%.1%"),
+                    "estimated_hit_prob": st.column_config.NumberColumn("Estimated hit %", format="%.2%"),
                     "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
                     "parlay_price": st.column_config.NumberColumn("Parlay odds"),
                 },
@@ -315,10 +315,10 @@ with ml_tab:
             use_container_width=True,
             column_config={
                 "commence_time": st.column_config.DatetimeColumn("Start ET"),
-                "fair_prob": st.column_config.NumberColumn("Model win %", format="%.1%"),
-                "market_fair_prob": st.column_config.NumberColumn("Market win %", format="%.1%"),
+                "fair_prob": st.column_config.NumberColumn("Model win %", format="%.2%"),
+                "market_fair_prob": st.column_config.NumberColumn("Market win %", format="%.2%"),
                 "model_prob_delta": st.column_config.NumberColumn("MLB factor +/-", format="%.2%"),
-                "best_implied_prob": st.column_config.NumberColumn("Best implied %", format="%.1%"),
+                "best_implied_prob": st.column_config.NumberColumn("Best implied %", format="%.2%"),
                 "edge_pct": st.column_config.NumberColumn("Edge", format="%.2%"),
                 "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
                 "fair_american": st.column_config.NumberColumn("Fair line"),
@@ -396,15 +396,15 @@ with factors_tab:
             hide_index=True,
             column_config={
                 "commence_time_et": st.column_config.DatetimeColumn("Start ET"),
-                "team_win_pct": st.column_config.NumberColumn("Win %", format="%.1%"),
-                "opp_team_win_pct": st.column_config.NumberColumn("Opp win %", format="%.1%"),
+                "team_win_pct": st.column_config.NumberColumn("Win %", format="%.2%"),
+                "opp_team_win_pct": st.column_config.NumberColumn("Opp win %", format="%.2%"),
                 "record_adj": st.column_config.NumberColumn("Record adj", format="%.2%"),
                 "offense_adj": st.column_config.NumberColumn("Offense adj", format="%.2%"),
                 "team_pitching_adj": st.column_config.NumberColumn("Team pitching adj", format="%.2%"),
                 "starter_adj": st.column_config.NumberColumn("Starter adj", format="%.2%"),
                 "home_adj": st.column_config.NumberColumn("Home adj", format="%.2%"),
                 "factor_adjustment": st.column_config.NumberColumn("Raw factor adj", format="%.2%"),
-                "factor_confidence": st.column_config.NumberColumn("Data confidence", format="%.0%"),
+                "factor_confidence": st.column_config.NumberColumn("Data confidence", format="%.2%"),
             },
         )
         st.caption(
@@ -444,7 +444,7 @@ with hr_tab:
                             use_container_width=True,
                             hide_index=True,
                             column_config={
-                                "raw_implied_prob": st.column_config.NumberColumn("Raw implied %", format="%.1%")
+                                "raw_implied_prob": st.column_config.NumberColumn("Raw implied %", format="%.2%")
                             },
                         )
                 except Exception as e:
@@ -465,7 +465,7 @@ with parlay_tab:
             use_container_width=True,
             hide_index=True,
             column_config={
-                "estimated_hit_prob": st.column_config.NumberColumn("Estimated hit %", format="%.1%"),
+                "estimated_hit_prob": st.column_config.NumberColumn("Estimated hit %", format="%.2%"),
                 "ev_per_$1": st.column_config.NumberColumn("EV / $1", format="$%.3f"),
                 "parlay_price": st.column_config.NumberColumn("Parlay odds"),
             },
@@ -485,7 +485,7 @@ with tracker_tab:
         c3.metric("P/L", f"${bets['profit_loss'].sum():,.2f}")
         total_staked = bets["stake"].sum()
         roi = bets["profit_loss"].sum() / total_staked if total_staked else 0
-        c4.metric("ROI", f"{roi:.1%}")
+        c4.metric("ROI", f"{roi:.2%}")
         st.dataframe(bets, use_container_width=True, hide_index=True)
 
         st.markdown("### Update result")
