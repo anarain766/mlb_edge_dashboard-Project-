@@ -80,7 +80,7 @@ class MLBStatsClient:
     dashboard falls back to the market-only model instead of breaking.
     """
 
-    def __init__(self, timeout: int = 20):
+    def __init__(self, timeout: int = 8):
         self.timeout = timeout
 
     def _get(self, path: str, params: dict | None = None) -> dict:
@@ -295,8 +295,16 @@ def _calc_adjustments(row: pd.Series) -> dict:
     return {**components, "factor_adjustment": total, "factor_confidence": confidence, "factor_count": len(usable)}
 
 
-def build_mlb_feature_frame(events: list[dict], season: int | None = None) -> pd.DataFrame:
-    """Build one row per odds event/team with MLB factors merged in."""
+def build_mlb_feature_frame(
+    events: list[dict],
+    season: int | None = None,
+    include_pitcher_stats: bool = False,
+) -> pd.DataFrame:
+    """Build one row per odds event/team with MLB factors merged in.
+
+    Starter stat lookups are optional because they require one API call per
+    probable pitcher and can make Streamlit Cloud slow on first load.
+    """
     if not events:
         return pd.DataFrame()
 
@@ -399,24 +407,27 @@ def build_mlb_feature_frame(events: list[dict], season: int | None = None) -> pd
     ]
     df = _attach_opponent_columns(df, opponent_cols)
 
-    # Probable pitcher season stat enrichment. Keep best-effort and cached by Streamlit at caller level.
-    pitcher_cache: dict[Any, dict] = {}
-    for col_id, prefix in [("probable_pitcher_id", ""), ("opponent_probable_pitcher_id", "opp_")]:
-        stat_rows: list[dict] = []
-        for pid in df.get(col_id, pd.Series(dtype=object)).dropna().unique().tolist():
-            if pid not in pitcher_cache:
-                try:
-                    pitcher_cache[pid] = client.pitcher_stats(pid, season)
-                except Exception:
-                    pitcher_cache[pid] = {}
-            stat = pitcher_cache[pid].copy()
-            stat[col_id] = pid
-            stat_rows.append(stat)
-        if stat_rows:
-            pstats = pd.DataFrame(stat_rows)
-            rename = {c: f"{prefix}{c}" for c in pstats.columns if c != col_id}
-            pstats = pstats.rename(columns=rename)
-            df = df.merge(pstats, on=col_id, how="left")
+    # Probable pitcher season stat enrichment. Optional for speed.
+    # Without this, the app still shows probable pitcher names and uses record,
+    # offense, team pitching, and home-field factors.
+    if include_pitcher_stats:
+        pitcher_cache: dict[Any, dict] = {}
+        for col_id, prefix in [("probable_pitcher_id", ""), ("opponent_probable_pitcher_id", "opp_")]:
+            stat_rows: list[dict] = []
+            for pid in df.get(col_id, pd.Series(dtype=object)).dropna().unique().tolist():
+                if pid not in pitcher_cache:
+                    try:
+                        pitcher_cache[pid] = client.pitcher_stats(pid, season)
+                    except Exception:
+                        pitcher_cache[pid] = {}
+                stat = pitcher_cache[pid].copy()
+                stat[col_id] = pid
+                stat_rows.append(stat)
+            if stat_rows:
+                pstats = pd.DataFrame(stat_rows)
+                rename = {c: f"{prefix}{c}" for c in pstats.columns if c != col_id}
+                pstats = pstats.rename(columns=rename)
+                df = df.merge(pstats, on=col_id, how="left")
 
     adjustments = df.apply(_calc_adjustments, axis=1, result_type="expand")
     df = pd.concat([df, adjustments], axis=1)
